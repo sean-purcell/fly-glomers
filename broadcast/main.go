@@ -1,13 +1,33 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
+	"sort"
+	"sync"
+	"time"
 
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
+func sendUntilSuccess(n *maelstrom.Node, peer string, message int) {
+	body := map[string]any{}
+	body["type"] = "broadcast"
+	body["message"] = message
+	for {
+		_, err := n.SyncRPC(context.Background(), peer, body)
+		if err != nil {
+			log.Print("Failed to send RPC", err)
+			time.Sleep(time.Second / 4)
+		} else {
+			break
+		}
+	}
+}
+
 func main() {
+	var lock sync.Mutex
 	n := maelstrom.NewNode()
 
 	seen := map[int]struct{}{}
@@ -20,15 +40,17 @@ func main() {
 			return err
 		}
 
+		lock.Lock()
 		val := int(body["message"].(float64))
 		_, is_new := seen[val]
 
 		if !is_new {
 			seen[val] = struct{}{}
 			for _, peer := range peers {
-				n.Send(peer, body)
+				go sendUntilSuccess(n, peer, val)
 			}
 		}
+		lock.Unlock()
 
 		seen[int(body["message"].(float64))] = struct{}{}
 		delete(body, "message")
@@ -43,10 +65,13 @@ func main() {
 			return err
 		}
 
+		lock.Lock()
 		keys := make([]int, 0, len(seen))
 		for k := range seen {
 			keys = append(keys, k)
 		}
+		lock.Unlock()
+		sort.Ints(keys)
 		body["messages"] = keys
 		body["type"] = "read_ok"
 
