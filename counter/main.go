@@ -27,6 +27,7 @@ func main() {
 
 		for {
 			key_data, err := kv.Read(ctx, "counter")
+			log.Printf("read from kv: %v", key_data)
 			var prev_op int
 			var prev_val int
 			if err != nil {
@@ -39,13 +40,16 @@ func main() {
 
 			op := prev_op + 1
 			val := prev_val + int(body["delta"].(float64))
-			log.Printf("Trying to update from %v,%v to %v,%v", prev_op, prev_val, op, val)
-			err = kv.CompareAndSwap(ctx, "counter", Data{op: prev_op, val: prev_val}, Data{op, val}, true)
+			new_val := map[string]int{}
+			new_val["op"] = op
+			new_val["val"] = val
+			log.Printf("Trying to update from %v to %v", key_data, new_val)
+			err = kv.CompareAndSwap(ctx, "counter", key_data, new_val, true)
 			if err == nil {
-				log.Printf("Succeeded at updating from %v,%v to %v,%v", prev_op, prev_val, op, val)
+				log.Printf("Succeeded at updating %v to %v", key_data, new_val)
 				break
 			} else {
-				log.Printf("Failed at updating from %v,%v to %v,%v", prev_op, prev_val, op, val)
+				log.Printf("Failed at updating %v to %v", key_data, new_val)
 			}
 		}
 
@@ -65,6 +69,7 @@ func main() {
 
 		for {
 			key_data, err := kv.Read(ctx, "counter")
+			log.Printf("read from kv: %v", key_data)
 			var prev_op int
 			var prev_val int
 			if err != nil {
@@ -77,14 +82,17 @@ func main() {
 
 			op := prev_op + 1
 			val := prev_val
-			log.Printf("Trying to update from %v,%v to %v,%v", prev_op, prev_val, op, val)
-			err = kv.CompareAndSwap(ctx, "counter", Data{op: prev_op, val: prev_val}, Data{op, val}, true)
+			new_val := map[string]int{}
+			new_val["op"] = op
+			new_val["val"] = val
+			log.Printf("Trying to update from %v to %v", key_data, new_val)
+			err = kv.CompareAndSwap(ctx, "counter", key_data, new_val, true)
 			if err == nil {
-				log.Printf("Succeeded at updating from %v,%v to %v,%v", prev_op, prev_val, op, val)
+				log.Printf("Succeeded at updating %v to %v", key_data, new_val)
 				result = val
 				break
 			} else {
-				log.Printf("Failed at updating from %v,%v to %v,%v", prev_op, prev_val, op, val)
+				log.Printf("Failed at updating %v to %v", key_data, new_val)
 			}
 		}
 
