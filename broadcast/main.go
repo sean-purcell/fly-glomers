@@ -11,17 +11,34 @@ import (
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
-func sendUntilSuccess(n *maelstrom.Node, peer string, message int) {
+func sendUntilSuccess(n *maelstrom.Node, whoami string, peer string, message int) {
+	delay := time.Second
+
+	succeeded := false
+
 	body := map[string]any{}
 	body["type"] = "broadcast"
 	body["message"] = message
+	if whoami != "" {
+		body["from"] = whoami
+	}
 	for {
-		_, err := n.SyncRPC(context.Background(), peer, body)
-		if err != nil {
-			log.Print("Failed to send RPC", err)
-			time.Sleep(time.Second / 4)
-		} else {
+		log.Printf("Going to send %v to %v", message, peer)
+		go func() {
+			response, err := n.SyncRPC(context.Background(), peer, body)
+			if err != nil {
+				log.Print("Failed to send RPC", peer, message, err)
+			} else {
+				succeeded = true
+				log.Printf("RPC of %v to %v succeeded with %v", peer, message, response)
+			}
+		}()
+
+		time.Sleep(delay)
+		if succeeded {
 			break
+		} else {
+			log.Printf("Timed out or failed to send %v to %v", message, peer)
 		}
 	}
 }
@@ -33,6 +50,8 @@ func main() {
 	seen := map[int]struct{}{}
 	peers := []string{}
 
+	var whoami string
+
 	n.Handle("broadcast", func(msg maelstrom.Message) error {
 		var body map[string]any
 
@@ -40,19 +59,29 @@ func main() {
 			return err
 		}
 
-		lock.Lock()
 		val := int(body["message"].(float64))
+		from, has_from := body["from"]
+		_ = from
+
+		lock.Lock()
 		_, is_new := seen[val]
 
 		if !is_new {
 			seen[val] = struct{}{}
 			for _, peer := range peers {
-				go sendUntilSuccess(n, peer, val)
+				// ignoring topology so never gossip
+				if has_from {
+					// if peer == whoami || (has_from && from.(string) == peer) {
+
+				} else {
+					go sendUntilSuccess(n, whoami, peer, val)
+				}
 			}
 		}
-		lock.Unlock()
 
 		seen[int(body["message"].(float64))] = struct{}{}
+
+		lock.Unlock()
 		delete(body, "message")
 		body["type"] = "broadcast_ok"
 
@@ -84,7 +113,7 @@ func main() {
 			return err
 		}
 
-		whoami := n.ID()
+		whoami = n.ID()
 		top := body["topology"]
 		log.Print("received topology", top)
 		new_peers := body["topology"].(map[string]any)[whoami].([]any)
@@ -92,6 +121,9 @@ func main() {
 		for _, peer := range new_peers {
 			peers = append(peers, peer.(string))
 		}
+
+		// Ignore the topology because the challenge makes it impossible
+		peers = n.NodeIDs()
 
 		delete(body, "topology")
 		body["type"] = "topology_ok"
