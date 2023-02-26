@@ -11,26 +11,26 @@ import (
 	maelstrom "github.com/jepsen-io/maelstrom/demo/go"
 )
 
-func sendUntilSuccess(n *maelstrom.Node, whoami string, peer string, message int) {
+func sendUntilSuccess(n *maelstrom.Node, whoami string, peer string, messages []int) {
 	delay := time.Second
 
 	succeeded := false
 
 	body := map[string]any{}
 	body["type"] = "broadcast"
-	body["message"] = message
+	body["messages"] = messages
 	if whoami != "" {
 		body["from"] = whoami
 	}
 	for {
-		log.Printf("Going to send %v to %v", message, peer)
+		log.Printf("Going to send %v to %v", messages, peer)
 		go func() {
 			response, err := n.SyncRPC(context.Background(), peer, body)
 			if err != nil {
-				log.Print("Failed to send RPC", peer, message, err)
+				log.Print("Failed to send RPC", peer, messages, err)
 			} else {
 				succeeded = true
-				log.Printf("RPC of %v to %v succeeded with %v", peer, message, response)
+				log.Printf("RPC of %v to %v succeeded with %v", peer, messages, response)
 			}
 		}()
 
@@ -38,7 +38,7 @@ func sendUntilSuccess(n *maelstrom.Node, whoami string, peer string, message int
 		if succeeded {
 			break
 		} else {
-			log.Printf("Timed out or failed to send %v to %v", message, peer)
+			log.Printf("Timed out or failed to send %v to %v", messages, peer)
 		}
 	}
 }
@@ -48,9 +48,29 @@ func main() {
 	n := maelstrom.NewNode()
 
 	seen := map[int]struct{}{}
+	dirty := false
 	peers := []string{}
 
 	var whoami string
+
+	go func() {
+		for {
+			lock.Lock()
+			is_dirty := dirty
+			keys := make([]int, 0, len(seen))
+			for k := range seen {
+				keys = append(keys, k)
+			}
+			lock.Unlock()
+			if is_dirty {
+				for _, peer := range peers {
+					go sendUntilSuccess(n, whoami, peer, keys)
+				}
+			}
+
+			time.Sleep(time.Second / 8)
+		}
+	}()
 
 	n.Handle("broadcast", func(msg maelstrom.Message) error {
 		var body map[string]any
@@ -59,27 +79,32 @@ func main() {
 			return err
 		}
 
-		val := int(body["message"].(float64))
-		from, has_from := body["from"]
-
 		lock.Lock()
-		_, is_new := seen[val]
+		fval, has := body["message"]
+		if has {
+			val := int(fval.(float64))
+			_, exists := seen[val]
+			if !exists {
+				seen[val] = struct{}{}
+				dirty = true
+			}
+		}
 
-		if !is_new {
-			seen[val] = struct{}{}
-			for _, peer := range peers {
-				if has_from && from.(string) == peer {
-
-				} else {
-					go sendUntilSuccess(n, whoami, peer, val)
+		vals, has := body["messages"].([]any)
+		if has {
+			for _, v := range vals {
+				val := int(v.(float64))
+				_, exists := seen[val]
+				if !exists {
+					seen[val] = struct{}{}
+					dirty = true
 				}
 			}
 		}
 
-		seen[int(body["message"].(float64))] = struct{}{}
-
 		lock.Unlock()
 		delete(body, "message")
+		delete(body, "messages")
 		body["type"] = "broadcast_ok"
 
 		return n.Reply(msg, body)
@@ -118,6 +143,7 @@ func main() {
 		for _, peer := range new_peers {
 			peers = append(peers, peer.(string))
 		}
+		dirty = true
 
 		delete(body, "topology")
 		body["type"] = "topology_ok"

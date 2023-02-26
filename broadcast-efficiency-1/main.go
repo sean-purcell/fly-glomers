@@ -61,6 +61,7 @@ func main() {
 
 		val := int(body["message"].(float64))
 		from, has_from := body["from"]
+		_ = from
 
 		lock.Lock()
 		_, is_new := seen[val]
@@ -68,7 +69,9 @@ func main() {
 		if !is_new {
 			seen[val] = struct{}{}
 			for _, peer := range peers {
-				if has_from && from.(string) == peer {
+				// ignoring topology so never gossip
+				if has_from {
+					// if peer == whoami || (has_from && from.(string) == peer) {
 
 				} else {
 					go sendUntilSuccess(n, whoami, peer, val)
@@ -118,6 +121,9 @@ func main() {
 		for _, peer := range new_peers {
 			peers = append(peers, peer.(string))
 		}
+
+		// Ignore the topology because the challenge makes it impossible
+		peers = n.NodeIDs()
 
 		delete(body, "topology")
 		body["type"] = "topology_ok"
